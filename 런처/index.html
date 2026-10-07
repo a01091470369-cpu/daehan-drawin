@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>기계설비·정보통신 문서자동화 런처</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- 왼쪽 고정 사이드바 -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div id="brand-mark" class="brand-mark">기계</div>
+        <div class="brand-text">
+          <div id="brand-title" class="brand-title">문서자동화</div>
+          <div id="brand-sub" class="brand-sub">㈜대한기계정보통신</div>
+        </div>
+      </div>
+
+      <!-- 분야 전환(기계설비 / 정보통신) -->
+      <div id="domain-tabs" class="domain-tabs"></div>
+
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="건물 검색…" autocomplete="off">
+      </div>
+      <nav id="building-list" class="building-list">
+        <div class="loading">건물 목록 불러오는 중…</div>
+      </nav>
+      <div class="sidebar-foot"><span id="count">—</span>개 건물 · 로컬 실행</div>
+    </aside>
+
+    <!-- 오른쪽 본문 -->
+    <main class="main">
+      <header class="main-head">
+        <div>
+          <div id="sel-name" class="sel-name">건물을 선택하세요</div>
+          <div id="sel-code" class="sel-code"></div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center">
+          <button id="run-register" class="btn-run" style="display:none; background:#0b6b4f" title="통합관리대장(경영자료)을 만들어 엽니다">📊 경영자료(관리대장)</button>
+          <button id="run-all" class="btn-run" disabled>▶ 7종 문서 생성</button>
+        </div>
+      </header>
+
+      <section id="cards" class="cards"></section>
+
+      <section class="console-wrap">
+        <div class="console-head">
+          <span>실행 로그</span>
+          <span id="status" class="status idle">대기</span>
+        </div>
+        <pre id="console" class="console"></pre>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
