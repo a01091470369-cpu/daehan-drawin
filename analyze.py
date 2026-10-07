@@ -54,7 +54,7 @@ def scan(folder):
     return rows
 
 
-def run(folder, name=None, copy=True):
+def run(folder, name=None, copy=True, render=True, ocr=True):
     if not os.path.isdir(folder):
         print(f"[오류] 폴더가 없습니다: {folder}"); return 1
     name = name or os.path.basename(os.path.normpath(folder))
@@ -94,22 +94,48 @@ def run(folder, name=None, copy=True):
         if ext == ".pdf":
             r = X_PDF.extract(src, sub)
             pages, note, imgs = r["pages"], r["note"], r["images"]
+            texts = list(r["texts"])
+            # 글자가 거의 없는 쪽(스캔본)은 페이지 이미지를 OCR 한다
+            scanned = [i for i, t in enumerate(texts) if len(t.strip()) < 30 and i < len(imgs)]
+            if scanned and ocr and X_OCR.available():
+                print(f"  [{did}] {fn} — 스캔 {len(scanned)}쪽 OCR 중(쪽당 수십 초)…", flush=True)
+                for i in scanned:
+                    o = X_OCR.extract(imgs[i])
+                    if o["text"].strip():
+                        texts[i] = f"[OCR·{o['engine']}] 글자 뒤 [x,y]는 페이지 이미지 픽셀 위치\n" + o["text"]
+                    elif o["note"]:
+                        texts[i] = f"[OCR] {o['note']}"
+                note = (note + " / " if note else "") + f"스캔 {len(scanned)}쪽 OCR 처리"
             with io.open(sub + ".txt", "w", encoding="utf-8", newline="\n") as f:
-                for pi, t in enumerate(r["texts"], 1):
+                for pi, t in enumerate(texts, 1):
                     f.write(f"\n===== p{pi} =====\n{t}")
         elif ext in (".dwg", ".dxf"):
+            print(f"  [{did}] {fn} — 변환·이미지 생성 중(큰 도면은 수 분 걸림)…", flush=True)
             if ext == ".dwg":
-                r = X_DWG.extract(src, sub)
+                r = X_DWG.extract(src, sub, render=render)
             else:
-                r = X_DWG.read_dxf(src); r["dxf"] = src
-            note = r.get("note", "")
+                r = X_DWG.read_dxf(src, img_dir=sub if render else None); r["dxf"] = src
+            note, imgs, sheets = r.get("note", ""), r.get("images", []), r.get("sheets", [])
             with io.open(sub + ".txt", "w", encoding="utf-8", newline="\n") as f:
+                if sheets:
+                    f.write("===== 시트 목록 =====\n")
+                    for sh in sheets:
+                        f.write(f"{sh['id']}  {sh['구분']:4s} {sh['도면번호'] or '-':8s} "
+                                f"{os.path.basename(sh['png']) or '(이미지 실패)'}\n")
+                    f.write("\n")
                 f.write("===== 레이어 =====\n" + "\n".join(r.get("layers", [])))
-                f.write("\n\n===== 블록(심볼) 개수 =====\n")
+                f.write("\n\n===== 블록(심볼) 개수 — 전체 =====\n")
                 for k, v in sorted(r.get("blocks", {}).items(), key=lambda x: -x[1]):
                     f.write(f"{v:6d}  {k}\n")
-                f.write("\n===== 도면 텍스트 =====\n" + "\n".join(r.get("texts", [])))
-            pages = len(r.get("texts", []))
+                for sh in sheets:
+                    if not (sh["texts"] or sh["blocks"]):
+                        continue
+                    f.write(f"\n===== {sh['id']} {sh['도면번호']} — 블록 =====\n")
+                    for k, v in sorted(sh["blocks"].items(), key=lambda x: -x[1]):
+                        f.write(f"{v:6d}  {k}\n")
+                    f.write(f"----- {sh['id']} 텍스트 -----\n" + "\n".join(sh["texts"]) + "\n")
+                f.write("\n===== 도면 텍스트 — 전체 =====\n" + "\n".join(r.get("texts", [])))
+            pages = len(sheets) or len(r.get("texts", []))
         else:                                   # 이미지
             os.makedirs(sub, exist_ok=True)
             dst = os.path.join(sub, fn)
@@ -117,11 +143,15 @@ def run(folder, name=None, copy=True):
                 shutil.copy2(src, dst); imgs = [dst]
             except Exception:
                 pass
-            r = X_OCR.extract(src)
+            if ocr:
+                print(f"  [{did}] {fn} — OCR 중…", flush=True)
+                r = X_OCR.extract(src)
+            else:
+                r = {"text": "", "note": "OCR 생략(--no-ocr)", "engine": ""}
             note = r["note"]
             if r["text"].strip():
                 with io.open(sub + ".txt", "w", encoding="utf-8", newline="\n") as f:
-                    f.write(r["text"])
+                    f.write(f"[OCR·{r['engine']}] 글자 뒤 [x,y]는 이미지 픽셀 위치\n" + r["text"])
             pages = 1
 
         reading["도면"].append({"id": did, "파일": fn, "분야": fld, "도면명": "",
@@ -162,5 +192,7 @@ if __name__ == "__main__":
     ap.add_argument("folder", help="도면이 든 자료 폴더")
     ap.add_argument("--name", default=None, help="건물명(생략하면 폴더명)")
     ap.add_argument("--no-copy", action="store_true", help="00_원본 복사 생략")
+    ap.add_argument("--no-render", action="store_true", help="DWG/DXF 시트 이미지 생성 생략")
+    ap.add_argument("--no-ocr", action="store_true", help="스캔 PDF·이미지 OCR 생략")
     a = ap.parse_args()
-    sys.exit(run(a.folder, a.name, copy=not a.no_copy))
+    sys.exit(run(a.folder, a.name, copy=not a.no_copy, render=not a.no_render, ocr=not a.no_ocr))

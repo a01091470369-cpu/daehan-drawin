@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""DWG 도면 → (ODA File Converter) DXF → 텍스트·레이어·블록 덤프.
+"""DWG 도면 → (ODA File Converter) DXF → 텍스트·레이어·블록 덤프 + 시트별 PNG.
 
-그림 자체는 해석하지 않는다. 도면에 적힌 글자와 블록(심볼) 이름·개수만 뽑아
-Claude 판독의 보조 자료로 쓴다.
+글자·블록 덤프는 보조 자료다. 그림 판독은 dxf_render 가 도곽별로 찍은 PNG 를
+Claude 가 직접 보고 한다.
 """
 import os, glob, shutil, subprocess, tempfile
 
@@ -35,21 +35,33 @@ def dwg_to_dxf(dwg_path, out_dir, timeout=180):
     return hit if os.path.exists(hit) else None
 
 
-def read_dxf(dxf_path, max_texts=4000):
-    """DXF → {'texts': [...], 'layers': [...], 'blocks': {이름: 개수}}"""
+MAX_RENDER_MB = 400   # 이보다 큰 DXF 는 메모리 때문에 이미지를 만들지 않는다
+
+
+def read_dxf(dxf_path, max_texts=4000, img_dir=None, base=None):
+    """DXF → {'texts': [...], 'layers': [...], 'blocks': {이름: 개수}, 'images': [...], 'sheets': [...]}
+
+    img_dir 를 주면 시트별 PNG 도 만든다(dxf_render).
+    """
+    empty = {"texts": [], "layers": [], "blocks": {}, "images": [], "sheets": []}
     try:
         import ezdxf
     except ImportError:
-        return {"texts": [], "layers": [], "blocks": {}, "note": "ezdxf 없음"}
+        return dict(empty, note="ezdxf 없음")
     try:
         doc = ezdxf.readfile(dxf_path)
     except Exception as e:
-        return {"texts": [], "layers": [], "blocks": {}, "note": f"DXF 읽기 실패: {e}"}
+        return dict(empty, note=f"DXF 읽기 실패: {e}")
     msp = doc.modelspace()
     texts, blocks = [], {}
     for e in msp:
         t = e.dxftype()
-        if t == "TEXT":
+        if t == "INSERT":              # 블록 개수는 끝까지 센다(수량 대조용)
+            nm = e.dxf.name
+            blocks[nm] = blocks.get(nm, 0) + 1
+        elif len(texts) >= max_texts:
+            continue
+        elif t == "TEXT":
             s = (e.dxf.text or "").strip()
             if s:
                 texts.append(s)
@@ -57,21 +69,29 @@ def read_dxf(dxf_path, max_texts=4000):
             s = (e.text or "").strip()
             if s:
                 texts.append(s)
-        elif t == "INSERT":
-            nm = e.dxf.name
-            blocks[nm] = blocks.get(nm, 0) + 1
-        if len(texts) >= max_texts:
-            break
     layers = sorted(l.dxf.name for l in doc.layers)
-    return {"texts": texts, "layers": layers, "blocks": blocks, "note": ""}
+    out = dict(empty, texts=texts, layers=layers, blocks=blocks, note="")
+    if img_dir:
+        mb = os.path.getsize(dxf_path) / 1e6
+        if mb > MAX_RENDER_MB:
+            out["note"] = (f"DXF {mb:.0f}MB — 너무 커서 이미지 생략(한도 {MAX_RENDER_MB}MB). "
+                           "CAD 에서 PDF 로 출력해 주시면 직접 판독 가능")
+        else:
+            from . import dxf_render
+            try:
+                r = dxf_render.render(doc, img_dir, base or os.path.splitext(os.path.basename(dxf_path))[0])
+                out.update(images=r["images"], sheets=r["sheets"], note=r["note"])
+            except Exception as e:
+                out["note"] = f"이미지 생성 실패: {e}"
+    return out
 
 
-def extract(path, out_dir):
-    """반환: {'dxf': 경로|None, 'texts': [...], 'layers': [...], 'blocks': {...}, 'note': str}"""
+def extract(path, out_dir, render=True):
+    """반환: {'dxf': 경로|None, 'texts', 'layers', 'blocks', 'images', 'sheets', 'note'}"""
     dxf = dwg_to_dxf(path, out_dir)
     if not dxf:
-        return {"dxf": None, "texts": [], "layers": [], "blocks": {},
+        return {"dxf": None, "texts": [], "layers": [], "blocks": {}, "images": [], "sheets": [],
                 "note": "ODA File Converter 없음 또는 변환 실패 — PDF로 출력해 주시면 직접 판독 가능"}
-    r = read_dxf(dxf)
+    r = read_dxf(dxf, img_dir=out_dir if render else None)
     r["dxf"] = dxf
     return r

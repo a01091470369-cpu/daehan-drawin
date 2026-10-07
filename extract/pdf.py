@@ -4,6 +4,23 @@ import os
 
 DPI = 160          # 도면 글자가 읽히는 최소선. 너무 키우면 파일이 커져 판독이 느려진다.
 MAX_PAGES = 40
+SCAN_MAX_SIDE = 5000   # 스캔 쪽 이미지 긴 변 상한(px)
+
+
+def _scan_dpi(doc, page, dpi):
+    """스캔 쪽은 160dpi 로 찍으면 원본 스캔보다 흐려진다.
+    쪽에 깔린 가장 큰 이미지의 원래 해상도에 맞춰 dpi 를 올린다(상한 SCAN_MAX_SIDE)."""
+    try:
+        best = 0
+        for img in page.get_images(full=True):
+            w, h = img[2], img[3]
+            best = max(best, w / max(page.rect.width / 72, 1e-6), h / max(page.rect.height / 72, 1e-6))
+        if best <= dpi:
+            return dpi
+        cap = SCAN_MAX_SIDE / (max(page.rect.width, page.rect.height) / 72)
+        return int(min(best, cap))
+    except Exception:
+        return dpi
 
 
 def extract(path, out_dir, dpi=DPI, max_pages=MAX_PAGES):
@@ -20,9 +37,10 @@ def extract(path, out_dir, dpi=DPI, max_pages=MAX_PAGES):
         if n > max_pages:
             note = f"{n}쪽 중 앞 {max_pages}쪽만 이미지 생성(텍스트는 전체)"
         for i, page in enumerate(doc):
-            texts.append(page.get_text() or "")
+            t = page.get_text() or ""
+            texts.append(t)
             if i < max_pages:
-                pm = page.get_pixmap(dpi=dpi)
+                pm = page.get_pixmap(dpi=_scan_dpi(doc, page, dpi) if len(t.strip()) < 30 else dpi)
                 p = os.path.join(out_dir, f"{base}_p{i+1:02d}.png")
                 pm.save(p)
                 images.append(p)
